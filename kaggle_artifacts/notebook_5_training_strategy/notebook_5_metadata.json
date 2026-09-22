@@ -1,0 +1,30 @@
+{
+  "backbone_architecture": "EfficientNetB0",
+  "l2_regularisation_strength_added": 0.0001,
+  "early_stopping_monitor": "val_accuracy",
+  "early_stopping_patience": 5,
+  "reduce_lr_on_plateau_monitor": "val_loss",
+  "reduce_lr_on_plateau_factor": 0.5,
+  "reduce_lr_on_plateau_patience": 3,
+  "learning_rate_warm_up_duration_epochs": 3,
+  "stage_1_epochs_run": 8,
+  "stage_1_best_validation_accuracy": 0.7763636112213135,
+  "stage_2_configuration_a_no_warmup_best_validation_accuracy": 0.7872727513313293,
+  "stage_2_configuration_b_with_warmup_best_validation_accuracy": 0.7927272915840149,
+  "overall_best_candidate": "stage_2_configuration_b_with_warmup",
+  "overall_best_validation_accuracy": 0.7927272915840149,
+  "did_new_training_strategy_change_notebook_4_finding": true,
+  "class_weights_used": {
+    "0": 0.7800475059382422,
+    "1": 0.9546511627906977,
+    "2": 0.7800475059382422,
+    "3": 1.8244444444444445,
+    "4": 1.1898550724637682
+  },
+  "batch_size": 32,
+  "image_size": [
+    224,
+    224
+  ],
+  "random_seed": 42
+}

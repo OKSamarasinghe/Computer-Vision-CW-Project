@@ -1,0 +1,37 @@
+{
+  "summary_metrics": {
+    "test_set_size": 550,
+    "overall_test_accuracy": 0.7581818181818182,
+    "quadratic_weighted_kappa": 0.8256019886357611,
+    "notebook_5_recorded_best_validation_accuracy": 0.7927,
+    "test_vs_validation_accuracy_gap": -0.03451818181818178,
+    "total_misclassifications": 133,
+    "adjacent_stage_misclassifications": 95,
+    "far_miss_misclassifications": 38,
+    "random_seed": 42
+  },
+  "artefact_paths": {
+    "per_class_metrics_csv": "/kaggle/working/notebook_6_test_set_metrics_table.csv",
+    "confusion_matrix_figure": "/kaggle/working/notebook_6_confusion_matrix.png",
+    "reproduced_training_curves_figure": "/kaggle/working/notebook_6_reproduced_training_curves.png",
+    "error_analysis_csv": "/kaggle/working/notebook_6_error_analysis_confused_pairs.csv",
+    "misclassified_examples_grid": "/kaggle/working/notebook_6_misclassified_examples_grid.png",
+    "gradcam_correct_examples_grid": "/kaggle/working/notebook_6_gradcam_correct_examples_grid.png",
+    "gradcam_correct_examples_individual": [
+      "/kaggle/working/gradcam_correct_No_DR.png",
+      "/kaggle/working/gradcam_correct_Mild.png",
+      "/kaggle/working/gradcam_correct_Moderate.png",
+      "/kaggle/working/gradcam_correct_Severe.png",
+      "/kaggle/working/gradcam_correct_Proliferative_DR.png"
+    ],
+    "gradcam_confused_examples_grid": "/kaggle/working/notebook_6_gradcam_misclassified_examples_grid.png",
+    "gradcam_confused_examples_individual": [
+      "/kaggle/working/gradcam_confused_row10_Mild_as_Moderate.png",
+      "/kaggle/working/gradcam_confused_row28_Proliferative_DR_as_Moderate.png",
+      "/kaggle/working/gradcam_confused_row101_Moderate_as_Severe.png",
+      "/kaggle/working/gradcam_confused_row55_Severe_as_Moderate.png",
+      "/kaggle/working/gradcam_confused_row131_Moderate_as_Mild.png",
+      "/kaggle/working/gradcam_confused_row15_Proliferative_DR_as_Severe.png"
+    ]
+  }
+}

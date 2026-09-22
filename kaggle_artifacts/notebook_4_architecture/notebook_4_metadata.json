@@ -1,0 +1,33 @@
+{
+  "backbone_architecture": "EfficientNetB0",
+  "pretrained_weights": "imagenet",
+  "output_formulation": "5-class softmax (not ordinal)",
+  "transfer_learning_strategy": "staged: frozen head-only, then last-20-layers fine-tuning",
+  "stage_1_learning_rate_tuned": 0.001,
+  "stage_1_learning_rate_candidates_tested": [
+    0.01,
+    0.001,
+    0.0001
+  ],
+  "stage_1_epochs": 15,
+  "stage_2_fine_tuning_learning_rate": 1e-05,
+  "stage_2_unfrozen_layer_count": 20,
+  "stage_2_epochs": 10,
+  "batch_size": 32,
+  "image_size": [
+    224,
+    224
+  ],
+  "class_weights_used": {
+    "0": 0.7800475059382422,
+    "1": 0.9546511627906977,
+    "2": 0.7800475059382422,
+    "3": 1.8244444444444445,
+    "4": 1.1898550724637682
+  },
+  "best_validation_accuracy": 0.7927272915840149,
+  "overall_best_stage": "stage_1_head_only",
+  "best_stage_2_epoch": 6,
+  "restore_best_weights_applied": true,
+  "random_seed": 42
+}
