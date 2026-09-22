@@ -16,11 +16,8 @@ Thumbs.db
 # --- Streamlit ---
 .streamlit/
 
-# --- Large trained model files: track with Git LFS instead (see top-level README) ---
-# Comment these two lines out once `git lfs track "*.keras" "*.h5"` is set up, so the
-# files are tracked via LFS rather than skipped entirely.
-app/models/*.keras
-app/models/*.h5
+# --- Large trained model files: tracked with Git LFS (git lfs track "*.keras" "*.h5" is set up) ---
+# .keras and .h5 files are no longer ignored here; LFS handles them via .gitattributes instead.
 
 # --- Local scratch / secrets ---
 *.env
