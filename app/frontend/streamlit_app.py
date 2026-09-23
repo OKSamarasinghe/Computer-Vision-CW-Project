@@ -2,6 +2,8 @@
 Streamlit UI for the Diabetic Retinopathy Grading Assistant -- the application-layer innovation
 deliverable for Criterion 9 (Innovation, Practical Impact & Critical Discussion).
 
+Developed by Oshadha Samarasinghe.
+
 Run locally with (from the app/ directory):
 
     streamlit run frontend/streamlit_app.py
@@ -13,7 +15,7 @@ BACKEND (unchanged by this file -- no model is trained, fine-tuned, or modified 
   4. Grad-CAM explanation overlays, ported from Notebook 6 (backend/gradcam.py).
   5. A clinical referral-urgency mapping (backend/clinical_triage.py).
   6. A plain-language explanation generator (backend/explanation.py).
-  7. A downloadable PDF screening report (backend/report_generator.py).
+  7. A detailed multi-section PDF screening report (backend/report_generator.py).
   8. Real measured model performance figures (backend/model_performance.py).
 
 UI STRUCTURE -- five pages, selected from the sidebar navigation:
@@ -24,9 +26,12 @@ UI STRUCTURE -- five pages, selected from the sidebar navigation:
                        weaknesses, shown deliberately rather than hidden.
   - About            : purpose, pipeline, methodology, limitations, and citations.
 
-The sidebar deliberately holds ONLY navigation and a standing safety disclaimer. Upload controls,
-explanatory text and history each live on the page they belong to, so no page mixes "where am I
-going" with "what am I doing here".
+STYLING NOTE -- why every custom CSS class below sets an explicit `color`:
+Streamlit's viewer can be switched between light and dark themes independently of the app's own
+config.toml. A custom element that sets only a background colour inherits the *theme's* text colour,
+so a pale-background callout becomes white-on-pale (invisible) the moment a viewer selects the dark
+theme. Every ".dr-*" class therefore pins both its background AND its foreground colour, so the
+interface renders correctly regardless of the viewer's theme setting.
 """
 
 import os
@@ -59,36 +64,47 @@ from backend import (
 )
 
 
+APPLICATION_AUTHOR_NAME = "Oshadha Samarasinghe"
+
 # ---------------------------------------------------------------------------
-# Design tokens: one place for every colour/icon used by the custom components.
-# Everything here styles only our own "dr-*" CSS classes -- Streamlit's internal
-# DOM/class names are never targeted, since those change between versions.
+# Design tokens -- one place for every colour used by the custom components.
+# A clinical white-and-green palette: green reads as "health/screening" without the
+# alarm connotations of a red-dominant medical interface, and white keeps the fundus
+# images and heatmap overlays visually dominant rather than competing with the chrome.
 # ---------------------------------------------------------------------------
 
-BRAND_PRIMARY_COLOUR = "#0F6FA8"
-BRAND_SECONDARY_COLOUR = "#14919B"
+BRAND_PRIMARY_COLOUR = "#0E8C55"
+BRAND_DEEP_COLOUR = "#0A6B42"
+BRAND_LIGHT_COLOUR = "#E8F5EE"
+BRAND_ACCENT_COLOUR = "#12A66A"
 
+SURFACE_WHITE = "#FFFFFF"
+SURFACE_TINT = "#F4FAF7"
+TEXT_PRIMARY = "#1F2933"
+TEXT_MUTED = "#5C6B7A"
+RULE_COLOUR = "#DCE8E2"
+
+SIDEBAR_GRADIENT_TOP = "#0A6B42"
+SIDEBAR_GRADIENT_BOTTOM = "#0E8C55"
+
+# Urgency and confidence use a deliberate four-step escalation scale:
+#   green (routine) -> teal (needs review) -> orange (urgent) -> red (emergency)
+# Yellow/amber has been removed from the palette entirely at the author's request; teal replaces it
+# as the middle tier. The warm colours are retained ONLY for the genuinely time-critical levels,
+# because collapsing the whole scale to one colour would remove a clinician's ability to tell a
+# routine result from a sight-threatening one at a glance -- a real safety regression in a triage
+# tool, not just a styling choice.
 URGENCY_BADGE_STYLE_BY_LEVEL = {
     "Routine": {"background_colour": "#E3F2E8", "text_colour": "#1B5E3A", "icon": "\u2705"},
-    "Routine referral": {"background_colour": "#FFF4E0", "text_colour": "#8A5A00", "icon": "\U0001F7E1"},
+    "Routine referral": {"background_colour": "#DEEFF4", "text_colour": "#0F5C73", "icon": "\U0001F535"},
     "Urgent": {"background_colour": "#FFE8E0", "text_colour": "#B3401A", "icon": "\u26A0\uFE0F"},
     "Emergency": {"background_colour": "#FCE1E4", "text_colour": "#A3122B", "icon": "\U0001F6A8"},
 }
 
 CONFIDENCE_BADGE_STYLE_BY_LEVEL = {
     "High": {"background_colour": "#E3F2E8", "text_colour": "#1B5E3A", "icon": "\u25CF"},
-    "Moderate": {"background_colour": "#FFF4E0", "text_colour": "#8A5A00", "icon": "\u25D1"},
+    "Moderate": {"background_colour": "#DEEFF4", "text_colour": "#0F5C73", "icon": "\u25D1"},
     "Low": {"background_colour": "#FFE8E0", "text_colour": "#B3401A", "icon": "\u25CB"},
-}
-
-# Severity ordering drives the colour ramp on the per-class probability bars, so the visual
-# weight of a prediction rises with clinical seriousness rather than being arbitrary.
-CLASS_SEVERITY_COLOUR = {
-    "No_DR": "#2E9E5B",
-    "Mild": "#8CC63F",
-    "Moderate": "#F0AD4E",
-    "Severe": "#E8743B",
-    "Proliferative_DR": "#C4314B",
 }
 
 PAGE_NAMES = ["Dashboard", "New Scan", "Scan History", "Model Performance", "About"]
@@ -100,30 +116,79 @@ PAGE_ICONS = {
     "About": "\u2139\uFE0F",
 }
 
+# The five processing stages, rendered as icon cards on the About page and summarised on the
+# Dashboard. Kept as data rather than inline markup so both pages stay in sync automatically.
+PROCESSING_PIPELINE_STAGES = [
+    {
+        "icon": "\U0001F4E5",
+        "title": "1. Image intake",
+        "summary": "A retinal fundus photograph is uploaded and decoded locally.",
+        "detail": "Nothing leaves this machine -- no external API, no cloud upload, no storage beyond the session.",
+    },
+    {
+        "icon": "\U0001F9EA",
+        "title": "2. Preprocessing",
+        "summary": "Dark-border crop \u2192 resize 224\u00d7224 \u2192 CLAHE \u2192 Ben Graham correction.",
+        "detail": "Byte-for-byte the pipeline from Notebook 2, so the model sees exactly what it was trained on.",
+    },
+    {
+        "icon": "\U0001F9E0",
+        "title": "3. Grading with uncertainty",
+        "summary": f"EfficientNetB0 grades the image {config.MONTE_CARLO_DROPOUT_FORWARD_PASSES}\u00d7 with Monte Carlo Dropout active.",
+        "detail": "The spread across passes becomes a real confidence estimate -- no retraining required.",
+    },
+    {
+        "icon": "\U0001F50E",
+        "title": "4. Visual explanation",
+        "summary": "Grad-CAM highlights the retinal region that drove the prediction.",
+        "detail": "The grade can be sanity-checked against visible pathology rather than trusted blindly.",
+    },
+    {
+        "icon": "\U0001FA7A",
+        "title": "5. Clinical framing",
+        "summary": "Grade + confidence \u2192 referral urgency and plain-language explanation.",
+        "detail": "Low confidence always escalates caution, never reduces it.",
+    },
+    {
+        "icon": "\U0001F4C4",
+        "title": "6. Shareable report",
+        "summary": "A detailed multi-section PDF a screening workflow can actually pass on.",
+        "detail": "Images, probabilities, interpretation, methodology and disclaimer in one document.",
+    },
+]
+
 
 def inject_custom_css():
-    """Inject the application's custom CSS (banner, cards, badges, callouts, footer)."""
+    """Inject the application's custom CSS.
+
+    Every class pins BOTH background and text colour (see the module docstring) so no callout can
+    become invisible when the viewer switches Streamlit's own light/dark theme.
+    """
     st.markdown(
         f"""
         <style>
+        /* ---------- Header banner ---------- */
         .dr-header {{
-            background: linear-gradient(135deg, {BRAND_PRIMARY_COLOUR} 0%, {BRAND_SECONDARY_COLOUR} 100%);
+            background: linear-gradient(135deg, {BRAND_DEEP_COLOUR} 0%, {BRAND_ACCENT_COLOUR} 100%);
             padding: 26px 32px;
             border-radius: 14px;
-            color: #FFFFFF;
+            color: {SURFACE_WHITE};
             margin-bottom: 22px;
-            box-shadow: 0 4px 14px rgba(15, 111, 168, 0.25);
+            box-shadow: 0 4px 16px rgba(14, 140, 85, 0.22);
         }}
         .dr-header h1 {{
             margin: 0 0 6px 0;
             font-size: 1.75rem;
-            color: #FFFFFF;
+            color: {SURFACE_WHITE};
         }}
         .dr-header p {{
             margin: 0;
             font-size: 0.95rem;
-            opacity: 0.92;
+            color: {SURFACE_WHITE};
+            opacity: 0.94;
         }}
+
+        /* ---------- Badges ---------- */
         .dr-badge {{
             display: inline-block;
             padding: 5px 16px;
@@ -132,42 +197,60 @@ def inject_custom_css():
             font-size: 0.85rem;
             letter-spacing: 0.02em;
         }}
-        .dr-disclaimer {{
-            background-color: #FFF8E1;
-            border-left: 4px solid #F0AD4E;
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            color: #6B4A00;
-            margin-top: 12px;
-        }}
+
+        /* ---------- Callout boxes (all explicitly coloured) ---------- */
         .dr-note {{
-            background-color: #EAF4FB;
+            background-color: {BRAND_LIGHT_COLOUR};
             border-left: 4px solid {BRAND_PRIMARY_COLOUR};
-            padding: 12px 16px;
+            color: #14452F;
+            padding: 13px 17px;
             border-radius: 8px;
             font-size: 0.87rem;
+            line-height: 1.55;
             margin: 10px 0;
         }}
+        .dr-note b {{ color: {BRAND_DEEP_COLOUR}; }}
+
+        .dr-disclaimer {{
+            background-color: {BRAND_LIGHT_COLOUR};
+            border-left: 4px solid {BRAND_PRIMARY_COLOUR};
+            color: #14452F;
+            padding: 13px 17px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            line-height: 1.55;
+            margin-top: 12px;
+        }}
+        .dr-disclaimer b {{ color: {BRAND_DEEP_COLOUR}; }}
+
         .dr-limitation {{
             background-color: #FDF0F2;
             border-left: 4px solid #C4314B;
-            padding: 10px 14px;
+            color: #6E1524;
+            padding: 11px 15px;
             border-radius: 8px;
             font-size: 0.85rem;
-            margin-bottom: 8px;
+            line-height: 1.55;
+            margin-bottom: 9px;
         }}
+        .dr-limitation b {{ color: #8C1A2E; }}
+
+        /* ---------- Section titles ---------- */
         .dr-section-title {{
             font-size: 1.12rem;
             font-weight: 700;
+            color: {BRAND_DEEP_COLOUR};
             margin-bottom: 8px;
         }}
+
+        /* ---------- Statistic cards ---------- */
         .dr-stat-card {{
-            background: linear-gradient(135deg, #F7FAFC 0%, #EDF3F8 100%);
-            border: 1px solid #DCE6EE;
+            background: linear-gradient(135deg, {SURFACE_WHITE} 0%, {SURFACE_TINT} 100%);
+            border: 1px solid {RULE_COLOUR};
             border-radius: 12px;
             padding: 16px 18px;
             text-align: center;
+            color: {TEXT_PRIMARY};
         }}
         .dr-stat-value {{
             font-size: 1.7rem;
@@ -176,19 +259,109 @@ def inject_custom_css():
             line-height: 1.1;
         }}
         .dr-stat-label {{
-            font-size: 0.78rem;
-            color: #64748B;
+            font-size: 0.75rem;
+            color: {TEXT_MUTED};
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            margin-top: 4px;
+            margin-top: 5px;
         }}
+
+        /* ---------- Pipeline stage cards (About page) ---------- */
+        .dr-stage-card {{
+            background-color: {SURFACE_WHITE};
+            border: 1px solid {RULE_COLOUR};
+            border-top: 3px solid {BRAND_PRIMARY_COLOUR};
+            border-radius: 12px;
+            padding: 16px 18px;
+            height: 100%;
+            color: {TEXT_PRIMARY};
+        }}
+        .dr-stage-icon {{
+            font-size: 1.7rem;
+            line-height: 1;
+            margin-bottom: 8px;
+        }}
+        .dr-stage-title {{
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: {BRAND_DEEP_COLOUR};
+            margin-bottom: 5px;
+        }}
+        .dr-stage-summary {{
+            font-size: 0.84rem;
+            color: {TEXT_PRIMARY};
+            line-height: 1.5;
+            margin-bottom: 6px;
+        }}
+        .dr-stage-detail {{
+            font-size: 0.77rem;
+            color: {TEXT_MUTED};
+            line-height: 1.45;
+            font-style: italic;
+        }}
+        .dr-stage-arrow {{
+            text-align: center;
+            color: {BRAND_PRIMARY_COLOUR};
+            font-size: 1.3rem;
+            font-weight: 700;
+            padding-top: 42px;
+        }}
+
+        /* ---------- Sidebar identity + footer ---------- */
+        .dr-sidebar-brand {{
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: {SURFACE_WHITE};
+            padding: 12px 0 4px 0;
+        }}
+        .dr-sidebar-author {{
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.82);
+            line-height: 1.5;
+        }}
+        .dr-sidebar-author b {{ color: {SURFACE_WHITE}; }}
+
+        /* ---------- Green sidebar panel ----------
+           This is the one place the interface styles a Streamlit-internal element
+           (the sidebar container) rather than its own "dr-*" classes, because Streamlit
+           exposes no supported API for recolouring the sidebar. It is written defensively:
+           several selector forms are supplied, and if a future Streamlit release renames
+           the test-id, the sidebar simply falls back to its default appearance rather
+           than breaking the page. */
+        section[data-testid="stSidebar"],
+        div[data-testid="stSidebar"] {{
+            background: linear-gradient(180deg, {SIDEBAR_GRADIENT_TOP} 0%, {SIDEBAR_GRADIENT_BOTTOM} 100%);
+        }}
+        section[data-testid="stSidebar"] * ,
+        div[data-testid="stSidebar"] * {{
+            color: {SURFACE_WHITE};
+        }}
+        section[data-testid="stSidebar"] hr,
+        div[data-testid="stSidebar"] hr {{
+            border-color: rgba(255, 255, 255, 0.28);
+        }}
+        /* Radio navigation: give the selected page a subtle translucent pill so the
+           current location is obvious against the green panel. */
+        section[data-testid="stSidebar"] label:has(input[type="radio"]:checked) {{
+            background-color: rgba(255, 255, 255, 0.18);
+            border-radius: 8px;
+        }}
+        section[data-testid="stSidebar"] label {{
+            padding: 3px 8px;
+            border-radius: 8px;
+            transition: background-color 0.15s ease;
+        }}
+        section[data-testid="stSidebar"] label:hover {{
+            background-color: rgba(255, 255, 255, 0.10);
+        }}
+
         .dr-footer {{
             text-align: center;
-            color: #8A94A6;
+            color: {TEXT_MUTED};
             font-size: 0.78rem;
             margin-top: 32px;
             padding-top: 16px;
-            border-top: 1px solid #E3E8EF;
+            border-top: 1px solid {RULE_COLOUR};
         }}
         </style>
         """,
@@ -205,10 +378,22 @@ def render_badge_html(label_text, background_colour, text_colour):
 
 
 def render_stat_card_html(value_text, label_text):
-    """Build one small statistic card (big number over a small uppercase label)."""
+    """Build one statistic card (big number over a small uppercase label)."""
     return (
         f'<div class="dr-stat-card"><div class="dr-stat-value">{value_text}</div>'
         f'<div class="dr-stat-label">{label_text}</div></div>'
+    )
+
+
+def render_stage_card_html(stage):
+    """Build one pipeline-stage card for the About page."""
+    return (
+        f'<div class="dr-stage-card">'
+        f'<div class="dr-stage-icon">{stage["icon"]}</div>'
+        f'<div class="dr-stage-title">{stage["title"]}</div>'
+        f'<div class="dr-stage-summary">{stage["summary"]}</div>'
+        f'<div class="dr-stage-detail">{stage["detail"]}</div>'
+        f"</div>"
     )
 
 
@@ -334,24 +519,21 @@ def render_page_header(title_text, subtitle_text):
 
 def render_footer():
     st.markdown(
-        '<div class="dr-footer">Diabetic Retinopathy Grading Assistant &middot; Computer Vision '
-        "Coursework Prototype &middot; Not a certified diagnostic device</div>",
+        f'<div class="dr-footer">Diabetic Retinopathy Grading Assistant &middot; '
+        f"Computer Vision Coursework Prototype &middot; Developed by {APPLICATION_AUTHOR_NAME}</div>",
         unsafe_allow_html=True,
     )
 
 
 def render_sidebar_navigation():
-    """Sidebar holds navigation and the standing safety disclaimer -- nothing else.
+    """Sidebar holds navigation, a session counter, a one-line safety note and attribution.
 
     Upload controls, explanations and history belong on their own pages, so the sidebar stays a
     pure "where am I going" control rather than mixing navigation with task content.
     """
     with st.sidebar:
         st.markdown(
-            f'<div style="padding:14px 0 10px 0;">'
-            f'<div style="font-size:1.05rem;font-weight:700;color:{BRAND_PRIMARY_COLOUR};">'
-            f"\U0001FA7A DR Grading Assistant</div>"
-            f'<div style="font-size:0.75rem;color:#64748B;">EfficientNetB0 &middot; APTOS 2019</div></div>',
+            f'<div class="dr-sidebar-brand">\U0001FA7A DR Grading Assistant</div>',
             unsafe_allow_html=True,
         )
         st.markdown("---")
@@ -368,39 +550,38 @@ def render_sidebar_navigation():
         st.caption(f"Scans this session: **{len(scan_history)}**")
 
         st.markdown("---")
-        st.caption(
-            "\u26A0\uFE0F Screening-support coursework prototype. Not a certified diagnostic device. "
-            "Every result requires review by a qualified ophthalmologist or optometrist."
+        st.caption("\u26A0\uFE0F Diagnostic device Prototype")
+        st.markdown(
+            f'<div class="dr-sidebar-author">Developed by<br><b>{APPLICATION_AUTHOR_NAME}</b></div>',
+            unsafe_allow_html=True,
         )
 
     return selected_page_name
 
 
 def render_per_class_probability_chart(mc_dropout_result):
-    """Show per-class mean probability as a horizontal bar chart, coloured by clinical severity.
+    """Show per-class mean probability as a bar chart plus the underlying numbers.
 
-    A chart rather than a list, because the shape of the distribution (one confident peak vs. two
-    classes competing) is the thing a clinician actually needs to see at a glance -- and that shape
-    is exactly what a column of percentages hides.
+    A chart rather than only a list, because the shape of the distribution (one confident peak vs.
+    two classes competing) is what a clinician needs to see at a glance -- and that shape is exactly
+    what a column of percentages hides.
     """
     probability_dataframe = pd.DataFrame({
-        "Class": config.DIABETIC_RETINOPATHY_CLASS_NAMES,
-        "Probability": [float(value) for value in mc_dropout_result["mean_class_probabilities"]],
-        "Uncertainty (std)": [float(value) for value in mc_dropout_result["per_class_standard_deviation"]],
+        "Class": [name.replace("_", " ") for name in config.DIABETIC_RETINOPATHY_CLASS_NAMES],
+        "Probability %": [
+            round(float(value) * 100, 1) for value in mc_dropout_result["mean_class_probabilities"]
+        ],
+        "Uncertainty (std)": [
+            round(float(value), 3) for value in mc_dropout_result["per_class_standard_deviation"]
+        ],
     })
-    probability_dataframe["Probability %"] = (probability_dataframe["Probability"] * 100).round(1)
 
     st.bar_chart(
         probability_dataframe.set_index("Class")["Probability %"],
-        horizontal=True,
         color=BRAND_PRIMARY_COLOUR,
-        height=220,
+        height=240,
     )
-    st.dataframe(
-        probability_dataframe[["Class", "Probability %", "Uncertainty (std)"]],
-        hide_index=True,
-        use_container_width=True,
-    )
+    st.dataframe(probability_dataframe, hide_index=True, use_container_width=True)
 
 
 def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing_steps=True):
@@ -416,7 +597,10 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
 
     # --- Images ---
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">Fundus image and explanation overlay</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Fundus image and explanation overlay</div>',
+            unsafe_allow_html=True,
+        )
         left_column, right_column = st.columns(2)
         with left_column:
             st.image(
@@ -435,11 +619,11 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
     with st.container(border=True):
         urgency_style = URGENCY_BADGE_STYLE_BY_LEVEL.get(
             referral_recommendation["urgency_level"],
-            {"background_colour": "#EEF1F5", "text_colour": "#333333", "icon": ""},
+            {"background_colour": "#EEF1F5", "text_colour": TEXT_PRIMARY, "icon": ""},
         )
         confidence_style = CONFIDENCE_BADGE_STYLE_BY_LEVEL.get(
             confidence_assessment["confidence_level"],
-            {"background_colour": "#EEF1F5", "text_colour": "#333333", "icon": ""},
+            {"background_colour": "#EEF1F5", "text_colour": TEXT_PRIMARY, "icon": ""},
         )
 
         predicted_grade_display_name = mc_dropout_result["predicted_class_name"].replace("_", " ")
@@ -450,15 +634,16 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
 
         # Build each badge's HTML separately first, purely for readability -- nesting these calls
         # inside the markdown f-string below would make it very hard to follow.
-        urgency_badge_label = f"{urgency_style['icon']} {referral_recommendation['urgency_level']}"
         urgency_badge_html = render_badge_html(
-            urgency_badge_label, urgency_style["background_colour"], urgency_style["text_colour"]
+            f"{urgency_style['icon']} {referral_recommendation['urgency_level']}",
+            urgency_style["background_colour"],
+            urgency_style["text_colour"],
         )
-        confidence_badge_label = f"{confidence_style['icon']} {confidence_assessment['confidence_level']} confidence"
         confidence_badge_html = render_badge_html(
-            confidence_badge_label, confidence_style["background_colour"], confidence_style["text_colour"]
+            f"{confidence_style['icon']} {confidence_assessment['confidence_level']} confidence",
+            confidence_style["background_colour"],
+            confidence_style["text_colour"],
         )
-
         st.markdown(
             f'<div style="margin-bottom:12px;">{urgency_badge_html}&nbsp;&nbsp;{confidence_badge_html}</div>',
             unsafe_allow_html=True,
@@ -469,12 +654,17 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
         metric_columns[1].metric("Uncertainty (std)", f"{mc_dropout_result['predicted_class_uncertainty_std']:.3f}")
         metric_columns[2].metric("MC Dropout passes", f"{mc_dropout_result['number_of_forward_passes']}")
 
-        st.markdown(f"**Recommended action:** {referral_recommendation['recommended_action']}")
+        st.markdown(
+            f'<div class="dr-note"><b>Recommended action:</b> '
+            f"{referral_recommendation['recommended_action']}</div>",
+            unsafe_allow_html=True,
+        )
 
     # --- Probability distribution ---
     with st.container(border=True):
         st.markdown(
-            '<div class="dr-section-title">Per-class probability distribution</div>', unsafe_allow_html=True
+            '<div class="dr-section-title">Per-class probability distribution</div>',
+            unsafe_allow_html=True,
         )
         st.caption(
             "Mean probability across all Monte Carlo Dropout passes, with the standard deviation "
@@ -507,10 +697,13 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
 
     # --- PDF download ---
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">\U0001F4C4 Screening report</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">\U0001F4C4 Screening report</div>', unsafe_allow_html=True
+        )
         st.write(
-            "A one-page PDF bundling the image, the Grad-CAM overlay, the grade, the confidence, and "
-            "the referral recommendation -- the artefact a screening workflow would pass on."
+            "A detailed multi-page PDF containing the images, the full probability breakdown, the "
+            "interpretation, the methodology used, and the safety disclaimer -- the artefact a "
+            "screening workflow would pass on to a clinician."
         )
 
         original_image_pil = Image.fromarray(
@@ -527,13 +720,16 @@ def render_result_detail(pipeline_result, uploaded_file_name, show_preprocessing
             referral_recommendation,
             pipeline_result["explanation_text"],
             patient_reference_label=uploaded_file_name,
+            class_names=config.DIABETIC_RETINOPATHY_CLASS_NAMES,
+            heatmap_region_description=pipeline_result.get("heatmap_region_description"),
         )
         st.download_button(
-            "Download screening report (PDF)",
+            "\u2B07\uFE0F  Download screening report (PDF)",
             data=report_pdf_bytes,
             file_name=f"dr_screening_report_{uploaded_file_name}.pdf",
             mime="application/pdf",
             key=f"download_button_{uploaded_file_name}_{id(pipeline_result)}",
+            type="primary",
         )
 
 
@@ -558,17 +754,14 @@ def render_dashboard_page():
         render_stat_card_html(f"{model_performance.QUADRATIC_WEIGHTED_KAPPA:.3f}", "QWK (ordinal)"),
         unsafe_allow_html=True,
     )
-    status_columns[2].markdown(
-        render_stat_card_html("5", "Severity grades"),
-        unsafe_allow_html=True,
-    )
+    status_columns[2].markdown(render_stat_card_html("5", "Severity grades"), unsafe_allow_html=True)
     status_columns[3].markdown(
         render_stat_card_html(f"{config.MONTE_CARLO_DROPOUT_FORWARD_PASSES}", "MC Dropout passes"),
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div class="dr-note">These are real measured figures from this project\'s held-out '
+        "<div class='dr-note'>These are <b>real measured figures</b> from this project's held-out "
         "550-image test set (Notebook 6), not illustrative placeholders. The full breakdown, "
         "including where the model is weakest, is on the <b>Model Performance</b> page.</div>",
         unsafe_allow_html=True,
@@ -586,12 +779,21 @@ def render_dashboard_page():
             if not scan_history:
                 st.info("No scans yet. Head to **New Scan** to grade your first fundus image.")
             else:
-                st.metric("Images graded", len(scan_history))
+                summary_columns = st.columns(2)
+                summary_columns[0].metric("Images graded", len(scan_history))
+
+                referable_count = sum(
+                    1 for history_entry in scan_history
+                    if history_entry["pipeline_result"]["mc_dropout_result"]["predicted_class_name"]
+                    in ("Moderate", "Severe", "Proliferative_DR")
+                )
+                summary_columns[1].metric("Referable findings", referable_count)
 
                 grade_counts = {}
                 for history_entry in scan_history:
                     grade_name = history_entry["pipeline_result"]["mc_dropout_result"]["predicted_class_name"]
-                    grade_counts[grade_name] = grade_counts.get(grade_name, 0) + 1
+                    display_name = grade_name.replace("_", " ")
+                    grade_counts[display_name] = grade_counts.get(display_name, 0) + 1
 
                 grade_distribution_dataframe = pd.DataFrame({
                     "Grade": list(grade_counts.keys()),
@@ -599,7 +801,7 @@ def render_dashboard_page():
                 })
                 st.bar_chart(
                     grade_distribution_dataframe.set_index("Grade")["Count"],
-                    color=BRAND_SECONDARY_COLOUR,
+                    color=BRAND_ACCENT_COLOUR,
                     height=200,
                 )
 
@@ -616,23 +818,18 @@ def render_dashboard_page():
     with right_column:
         with st.container(border=True):
             st.markdown('<div class="dr-section-title">How this works</div>', unsafe_allow_html=True)
-            st.markdown(
-                "**1. Preprocessing** — the uploaded image is cropped, resized to 224x224, "
-                "contrast-enhanced (CLAHE) and illumination-corrected (Ben Graham), using the exact "
-                "pipeline the model was trained on.\n\n"
-                "**2. Grading with uncertainty** — the trained EfficientNetB0 model grades the image "
-                f"{config.MONTE_CARLO_DROPOUT_FORWARD_PASSES} times with Monte Carlo Dropout active. "
-                "The spread across those passes becomes a genuine confidence estimate.\n\n"
-                "**3. Visual explanation** — a Grad-CAM heatmap shows which retinal region drove the "
-                "prediction, so the grade can be sanity-checked rather than trusted blindly.\n\n"
-                "**4. Clinical framing** — the grade and confidence map to a referral-urgency "
-                "recommendation, with low-confidence results always escalating caution, never reducing it.\n\n"
-                "**5. Report** — everything is bundled into a downloadable one-page PDF."
-            )
+            for stage in PROCESSING_PIPELINE_STAGES:
+                st.markdown(
+                    f"{stage['icon']} &nbsp;**{stage['title']}** &mdash; {stage['summary']}",
+                    unsafe_allow_html=True,
+                )
 
     # --- Severity reference ---
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">Severity grades and referral pathway</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Severity grades and referral pathway</div>',
+            unsafe_allow_html=True,
+        )
         severity_reference_rows = []
         for class_name in config.DIABETIC_RETINOPATHY_CLASS_NAMES:
             referral_information = config.REFERRAL_URGENCY_BY_CLASS_NAME[class_name]
@@ -661,7 +858,9 @@ def render_new_scan_page(trained_model, gradcam_gradient_model):
     )
 
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">Upload a fundus photograph</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Upload a fundus photograph</div>', unsafe_allow_html=True
+        )
         uploaded_file = st.file_uploader(
             "Supported formats: PNG, JPG, JPEG",
             type=["png", "jpg", "jpeg"],
@@ -674,7 +873,7 @@ def render_new_scan_page(trained_model, gradcam_gradient_model):
 
     if uploaded_file is None:
         st.markdown(
-            '<div class="dr-note">Once you upload an image, this page will show the preprocessed '
+            "<div class='dr-note'>Once you upload an image, this page will show the preprocessed "
             "fundus photograph, a Grad-CAM explanation overlay, the predicted severity grade with an "
             "uncertainty estimate, a referral recommendation, a plain-language explanation, and a "
             "downloadable PDF screening report.</div>",
@@ -733,12 +932,12 @@ def render_scan_history_page():
         csv_export_bytes = summary_dataframe.to_csv(index=False).encode("utf-8")
         export_column, clear_column = st.columns([1, 1])
         export_column.download_button(
-            "Export session log (CSV)",
+            "\u2B07\uFE0F  Export session log (CSV)",
             data=csv_export_bytes,
             file_name=f"dr_session_log_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
         )
-        if clear_column.button("Clear session history"):
+        if clear_column.button("\U0001F5D1\uFE0F  Clear session history"):
             st.session_state["scan_history"] = []
             st.session_state.pop("current_pipeline_result", None)
             st.session_state.pop("current_upload_signature", None)
@@ -783,8 +982,8 @@ def render_model_performance_page():
     )
 
     st.markdown(
-        '<div class="dr-note">Every figure on this page was measured on a <b>550-image test set '
-        "that was held out and completely untouched</b> until final evaluation (Notebook 6) — no "
+        "<div class='dr-note'>Every figure on this page was measured on a <b>550-image test set "
+        "that was held out and completely untouched</b> until final evaluation (Notebook 6) &mdash; no "
         "model selection, tuning, or early-stopping decision ever saw it. Weaknesses are shown "
         "alongside strengths deliberately: a screening tool that hides how often it is wrong would "
         "be misleading to the clinician relying on it.</div>",
@@ -819,7 +1018,10 @@ def render_model_performance_page():
     with performance_tabs[0]:
         per_class_dataframe, metrics_data_source = model_performance.load_per_class_metrics_dataframe()
 
-        st.markdown('<div class="dr-section-title">Precision, recall and F1 by severity grade</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Precision, recall and F1 by severity grade</div>',
+            unsafe_allow_html=True,
+        )
         st.caption(f"Source: {metrics_data_source}.")
 
         display_dataframe = per_class_dataframe.copy()
@@ -829,16 +1031,19 @@ def render_model_performance_page():
         st.dataframe(display_dataframe, hide_index=True, use_container_width=True)
 
         st.markdown("**Recall by grade** — the share of truly affected eyes the model actually catches:")
-        recall_chart_dataframe = per_class_dataframe.set_index("class_name")["recall"]
-        st.bar_chart(recall_chart_dataframe, color="#C4314B", height=240)
+        recall_chart_dataframe = per_class_dataframe.copy()
+        recall_chart_dataframe["class_name"] = recall_chart_dataframe["class_name"].str.replace("_", " ")
+        st.bar_chart(
+            recall_chart_dataframe.set_index("class_name")["recall"], color="#C4314B", height=240
+        )
 
         st.markdown(
-            '<div class="dr-limitation"><b>Read this honestly:</b> No_DR detection is strong (F1 0.95) '
+            "<div class='dr-limitation'><b>Read this honestly:</b> No DR detection is strong (F1 0.95) "
             "and Moderate is acceptable (F1 0.71), but recall for <b>Mild (0.32), Severe (0.38) and "
-            "Proliferative_DR (0.27)</b> is weak — the model misses roughly two thirds to three quarters "
-            "of these cases, and those are precisely the sight-threatening stages. This is exactly why "
-            "the application surfaces an uncertainty estimate on every prediction rather than presenting "
-            "each grade as settled.</div>",
+            "Proliferative DR (0.27)</b> is weak &mdash; the model misses roughly two thirds to three "
+            "quarters of these cases, and those are precisely the sight-threatening stages. This is "
+            "exactly why the application surfaces an uncertainty estimate on every prediction rather "
+            "than presenting each grade as settled.</div>",
             unsafe_allow_html=True,
         )
 
@@ -860,7 +1065,9 @@ def render_model_performance_page():
 
     # --- Tab 2: error structure ---
     with performance_tabs[1]:
-        st.markdown('<div class="dr-section-title">How wrong are the wrong answers?</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">How wrong are the wrong answers?</div>', unsafe_allow_html=True
+        )
         st.write(
             "Diabetic retinopathy grades are ordinal (0-4), so not all errors are equally serious. "
             "Mistaking Mild for Moderate is a low-stakes disagreement; mistaking No DR for a "
@@ -893,12 +1100,12 @@ def render_model_performance_page():
         })
         st.bar_chart(
             error_breakdown_dataframe.set_index("Error type")["Count"],
-            color=BRAND_SECONDARY_COLOUR,
+            color=BRAND_ACCENT_COLOUR,
             height=200,
         )
 
         st.markdown(
-            f'<div class="dr-note">The quadratic weighted kappa of '
+            f"<div class='dr-note'>The quadratic weighted kappa of "
             f"<b>{model_performance.QUADRATIC_WEIGHTED_KAPPA:.4f}</b> sits well above the raw accuracy of "
             f"<b>{model_performance.OVERALL_TEST_ACCURACY:.4f}</b>, and this error breakdown explains why: "
             f"{model_performance.ADJACENT_STAGE_ERROR_SHARE:.1%} of mistakes are only one stage off, "
@@ -920,7 +1127,9 @@ def render_model_performance_page():
 
     # --- Tab 3: dataset ---
     with performance_tabs[2]:
-        st.markdown('<div class="dr-section-title">Training data composition</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Training data composition</div>', unsafe_allow_html=True
+        )
 
         dataset_columns = st.columns(4)
         dataset_columns[0].markdown(
@@ -945,6 +1154,7 @@ def render_model_performance_page():
         st.markdown("")
         st.markdown("**Original class distribution (APTOS 2019, before augmentation)**")
         class_distribution_dataframe = model_performance.get_class_distribution_dataframe()
+        class_distribution_dataframe["class_name"] = class_distribution_dataframe["class_name"].str.replace("_", " ")
         st.bar_chart(
             class_distribution_dataframe.set_index("class_name")["image_count"],
             color=BRAND_PRIMARY_COLOUR,
@@ -952,9 +1162,9 @@ def render_model_performance_page():
         )
 
         st.markdown(
-            f'<div class="dr-note"><b>Synthetic data declaration:</b> '
+            f"<div class='dr-note'><b>Synthetic data declaration:</b> "
             f"{model_performance.SYNTHETIC_TRAINING_IMAGE_SHARE:.0%} of the training set "
-            f"({model_performance.AUGMENTED_TRAINING_SET_SIZE:,} images total) is synthetic — produced by "
+            f"({model_performance.AUGMENTED_TRAINING_SET_SIZE:,} images total) is synthetic &mdash; produced by "
             "rotation, flipping, zoom and brightness augmentation of real images, applied specifically to "
             "counter the severe class imbalance shown above. Augmentation was confined <b>entirely to the "
             "training split</b>; the validation and test splits are 100% real, unaugmented images, so the "
@@ -964,7 +1174,9 @@ def render_model_performance_page():
 
     # --- Tab 4: architecture ---
     with performance_tabs[3]:
-        st.markdown('<div class="dr-section-title">Model and training configuration</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Model and training configuration</div>', unsafe_allow_html=True
+        )
         configuration_dataframe = pd.DataFrame(
             model_performance.MODEL_CONFIGURATION_FACTS, columns=["Property", "Value"]
         )
@@ -983,10 +1195,10 @@ def render_model_performance_page():
             )
 
         st.markdown(
-            f'<div class="dr-note"><b>Why Monte Carlo Dropout needs no retraining:</b> the classification '
+            f"<div class='dr-note'><b>Why Monte Carlo Dropout needs no retraining:</b> the classification "
             "head above already contains Dropout(0.3) and Dropout(0.2) layers, added during training to "
             "prevent overfitting. At normal inference these are switched off. This application keeps them "
-            f"active and runs each image {config.MONTE_CARLO_DROPOUT_FORWARD_PASSES} times — the spread "
+            f"active and runs each image {config.MONTE_CARLO_DROPOUT_FORWARD_PASSES} times &mdash; the spread "
             "across those passes is the uncertainty estimate. No weights are changed, and no additional "
             "training happens anywhere in this application.</div>",
             unsafe_allow_html=True,
@@ -1000,11 +1212,11 @@ def render_model_performance_page():
             "this project's own evaluation."
         )
         for limitation_text in model_performance.DOCUMENTED_MODEL_LIMITATIONS:
-            st.markdown(f'<div class="dr-limitation">{limitation_text}</div>', unsafe_allow_html=True)
+            st.markdown(f"<div class='dr-limitation'>{limitation_text}</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="dr-section-title">Where this would go next</div>', unsafe_allow_html=True)
         st.markdown(
-            "- **Targeted data collection** for Mild, Severe and Proliferative_DR, whose small real-image "
+            "- **Targeted data collection** for Mild, Severe and Proliferative DR, whose small real-image "
             "counts (135-258 each) are the root cause of the weak recall above.\n"
             "- **Cross-checking explainability** with Grad-CAM++ or SHAP, to test whether the optic-disc "
             "confound persists across methods.\n"
@@ -1035,35 +1247,30 @@ def render_about_page():
             "It is designed to help a clinician triage and prioritise — never to replace their judgement."
         )
 
-    with st.container(border=True):
-        st.markdown('<div class="dr-section-title">Processing pipeline</div>', unsafe_allow_html=True)
-        st.markdown(
-            "```\n"
-            "Uploaded fundus image\n"
-            "        |\n"
-            "        v\n"
-            "[1] Preprocessing  (Notebook 2 pipeline)\n"
-            "        crop dark border -> resize 224x224 -> CLAHE -> Ben Graham illumination correction\n"
-            "        |\n"
-            "        v\n"
-            "[2] EfficientNetB0 inference  (Notebook 5 trained model)\n"
-            f"        {config.MONTE_CARLO_DROPOUT_FORWARD_PASSES} Monte Carlo Dropout passes -> mean probabilities + uncertainty\n"
-            "        |\n"
-            "        v\n"
-            "[3] Grad-CAM explanation  (Notebook 6 implementation)\n"
-            "        heatmap over the last convolutional layer -> region description\n"
-            "        |\n"
-            "        v\n"
-            "[4] Clinical triage + plain-language explanation\n"
-            "        grade + confidence -> referral urgency (low confidence escalates)\n"
-            "        |\n"
-            "        v\n"
-            "[5] Downloadable PDF screening report\n"
-            "```"
-        )
+    # --- Pipeline as icon cards ---
+    st.markdown('<div class="dr-section-title">Processing pipeline</div>', unsafe_allow_html=True)
+    st.caption("Every uploaded image passes through these six stages, in order.")
+
+    # Rendered as two rows of three cards, with arrow connectors between cards in each row, so the
+    # sequence reads visually as a flow rather than as an undifferentiated list.
+    for row_start_index in (0, 3):
+        row_stages = PROCESSING_PIPELINE_STAGES[row_start_index:row_start_index + 3]
+        stage_columns = st.columns([6, 1, 6, 1, 6])
+        for position_index, stage in enumerate(row_stages):
+            stage_columns[position_index * 2].markdown(
+                render_stage_card_html(stage), unsafe_allow_html=True
+            )
+            if position_index < len(row_stages) - 1:
+                stage_columns[position_index * 2 + 1].markdown(
+                    '<div class="dr-stage-arrow">&#10142;</div>', unsafe_allow_html=True
+                )
+        st.markdown("")
 
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">What makes this more than a classifier demo</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">What makes this more than a classifier demo</div>',
+            unsafe_allow_html=True,
+        )
         st.markdown(
             "- **Uncertainty is first-class.** Every prediction carries a Monte Carlo Dropout confidence "
             "estimate, and a low-confidence result always escalates caution rather than reducing it.\n"
@@ -1073,13 +1280,14 @@ def render_about_page():
             "just a class label.\n"
             "- **Limitations are on display, not buried.** The Model Performance page shows the model's "
             "weakest classes as prominently as its strongest.\n"
-            "- **No additional training was required.** Every feature reuses the already-trained model."
+            "- **No additional training was required.** Every feature reuses the already-trained model, "
+            "so the innovation is in how the model is *used*, not in more compute."
         )
 
     with st.container(border=True):
         st.markdown('<div class="dr-section-title">Safety and ethics</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="dr-disclaimer">{clinical_triage.CLINICAL_SAFETY_DISCLAIMER}</div>',
+            f"<div class='dr-disclaimer'>{clinical_triage.CLINICAL_SAFETY_DISCLAIMER}</div>",
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -1090,11 +1298,15 @@ def render_about_page():
             "any external service.\n"
             "- The model was trained on a single public dataset (APTOS 2019); performance on images from "
             "different populations, cameras or capture conditions is **unverified**.\n"
+            "- A low-grade or negative result **does not rule out disease** — minority-class recall is "
+            "0.27–0.38 (see Model Performance).\n"
             "- Automated grades must never be the sole basis for a clinical decision."
         )
 
     with st.container(border=True):
-        st.markdown('<div class="dr-section-title">Technology and sources</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dr-section-title">Technology and sources</div>', unsafe_allow_html=True
+        )
         st.markdown(
             "**Built with:** TensorFlow/Keras (EfficientNetB0), OpenCV, Streamlit, ReportLab, pandas, NumPy.\n\n"
             "**Dataset:** APTOS 2019 Blindness Detection (Kaggle), 3,662 labelled fundus images.\n\n"
@@ -1106,6 +1318,14 @@ def render_about_page():
             "- Chilukoti, S.V. et al. (2024) 'A reliable diabetic retinopathy grading via transfer learning "
             "and ensemble learning with quadratic weighted kappa metric', *BMC Medical Informatics and "
             "Decision Making*, 24, p.37."
+        )
+
+    with st.container(border=True):
+        st.markdown('<div class="dr-section-title">Credits</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"**Developed by {APPLICATION_AUTHOR_NAME} / cobsccomp242p-069**  \n"
+            "BSc (Hons) Computing — Computer Vision coursework, "
+            "National Institute of Business Management."
         )
 
     render_footer()
